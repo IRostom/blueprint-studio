@@ -1,0 +1,77 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+@theme static {
+  --font-sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+
+  /* Blueprint Studio tokens (HANDOFF.md) */
+  --color-bp-text: #eaf2ff;
+  --color-bp-muted: rgba(234, 242, 255, 0.72);
+  --color-bp-hairline: rgba(234, 242, 255, 0.16);
+  --color-bp-control: rgba(234, 242, 255, 0.28);
+  --color-bp-edge: rgba(234, 242, 255, 0.18);
+  --color-bp-selected-text: #0b1f3a;
+  --color-bp-trim: #ffb547;
+  --color-bp-glass: rgba(9, 22, 44, 0.58);
+  --color-bp-glass-light: rgba(9, 22, 44, 0.32);
+
+  --ease-drawer: cubic-bezier(.2, .7, .2, 1);
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #1f5fc8;
+}
+
+button {
+  cursor: pointer;
+}
+
+/* Every corner is square. */
+[data-bp-root] *,
+[data-bp-root] *::before,
+[data-bp-root] *::after {
+  border-radius: 0;
+}
+
+[data-bp-root] input[type='range'] {
+  accent-color: #eaf2ff;
+  width: 100%;
+  margin: 0;
+}
+
+[data-bp-root] input[type='color'] {
+  appearance: none;
+  padding: 0;
+  border: 1px solid rgba(234, 242, 255, 0.35);
+  background: none;
+  cursor: pointer;
+}
+
+[data-bp-root] input[type='color']::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+[data-bp-root] input[type='color']::-webkit-color-swatch,
+[data-bp-root] input[type='color']::-moz-color-swatch {
+  border: none;
+  border-radius: 0;
+}
+
+[data-bp-root] :focus-visible {
+  outline: 2px solid #eaf2ff;
+  outline-offset: 2px;
+}
+
+/* Registration-mark corner brackets, drawn in the cross colour. */
+@utility bp-reg-marks {
+  --g: linear-gradient(var(--bp-plus), var(--bp-plus));
+  background-image: var(--g), var(--g), var(--g), var(--g), var(--g), var(--g), var(--g), var(--g);
+  background-size: 8px 1.5px, 1.5px 8px, 8px 1.5px, 1.5px 8px, 8px 1.5px, 1.5px 8px, 8px 1.5px, 1.5px 8px;
+  background-position: 0 0, 0 0, 100% 0, 100% 0, 0 100%, 0 100%, 100% 100%, 100% 100%;
+  background-repeat: no-repeat;
+}
