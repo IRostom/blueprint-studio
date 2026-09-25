@@ -1,10 +1,11 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
-import type { BlueprintDesign, ExportSettings } from '../app/utils/blueprint/constants'
-import { DEFAULT_DESIGN, DEFAULT_EXPORT } from '../app/utils/blueprint/constants'
-import { gridSheetGeometry, rulersSheetGeometry, viewportGeometry } from '../app/utils/blueprint/geometry'
+import type { BlueprintDesign, ExportSettings, GridStyle } from '../app/utils/blueprint/constants'
+import { DEFAULT_DESIGN, DEFAULT_EXPORT, STYLE_PRESETS } from '../app/utils/blueprint/constants'
+import { sheetGeometry, viewportGeometry } from '../app/utils/blueprint/geometry'
 import { buildBlueprintSvg } from '../app/utils/blueprint/svg'
-import { canvasUnits, exceedsCanvasLimit, exportSvg, outputLabel, pngPixels } from '../app/utils/blueprint/export'
+import { canvasUnits, exceedsCanvasLimit, exportFilename, exportSvg, outputLabel, pngPixels } from '../app/utils/blueprint/export'
+import { matchStylePreset, normalizeStyle, presetDesign } from '../app/utils/blueprint/style'
 
 const fixture = (name: string) => readFileSync(new URL(`./fixtures/${name}`, import.meta.url), 'utf8')
 
@@ -30,14 +31,20 @@ function texts(markup: string) {
 
 const printMat: ExportSettings = { ...DEFAULT_EXPORT }
 
+/** A preset's design with some style fields changed. */
+const styled = (id: string, style: Partial<GridStyle>, rest: Partial<BlueprintDesign> = {}) => {
+  const d = presetDesign(id, rest)
+  return { ...d, style: { ...d.style, ...style } }
+}
+
 describe('grid sheet matches make_blueprint.py', () => {
   // make_blueprint.py: 940×440 canvas, 50/10 mm, half-arm 3 mm.
-  const design: BlueprintDesign = { ...DEFAULT_DESIGN, cross: 3 }
+  const design = presetDesign('grid', { cross: 3 })
   const ours = exportSvg(design, printMat)
   const ref = fixture('blueprint-deskmat.svg')
 
   it('fits 16 × 6 major cells', () => {
-    const g = gridSheetGeometry(940, 440, 20, design)
+    const g = sheetGeometry(940, 440, 20, design)
     expect([g.cols, g.rows, g.x0, g.y0]).toEqual([16, 6, 70, 70])
     expect(g.crosses).toHaveLength(17 * 7)
   })
@@ -56,7 +63,7 @@ describe('grid sheet matches make_blueprint.py', () => {
 })
 
 describe('rulers sheet matches make_blueprint_rulers.py', () => {
-  const design: BlueprintDesign = { ...DEFAULT_DESIGN, layout: 'rulers' }
+  const design = presetDesign('rulers')
   const ours = exportSvg(design, printMat)
   const ref = fixture('blueprint-deskmat-rulers.svg')
 
@@ -83,7 +90,104 @@ describe('rulers sheet matches make_blueprint_rulers.py', () => {
   })
 
   it('drops the title block when the frame is too small', () => {
-    expect(rulersSheetGeometry(100, 80, 0, design).titleBlock).toBeNull()
+    expect(sheetGeometry(100, 80, 0, design).titleBlock).toBeNull()
+  })
+})
+
+describe('composable styles', () => {
+  const W = 940
+  const H = 440
+  const B = 20
+  const svgOf = (d: BlueprintDesign) => exportSvg(d, printMat)
+
+  it('presets match themselves and edits become custom', () => {
+    for (const p of STYLE_PRESETS) expect(matchStylePreset(presetDesign(p.id))).toBe(p.id)
+    expect(matchStylePreset(styled('grid', { border: false }))).toBe('custom')
+    expect(matchStylePreset(presetDesign('grid', { cross: 5 }))).toBe('custom')
+    expect(exportFilename(presetDesign('rulers'), printMat)).toMatch(/^blueprint-rulers-/)
+  })
+
+  it('drops edge crosses when asked', () => {
+    expect(sheetGeometry(W, H, B, styled('grid', { edgeCrosses: false })).crosses).toHaveLength(15 * 5)
+  })
+
+  it('keeps crosses clear of a ruler side only', () => {
+    const g = sheetGeometry(W, H, B, styled('grid', { rulers: true, rulerSides: ['bottom'] }))
+    const bottom = g.y0 + g.h
+    expect(g.crosses.every(p => bottom - p.y >= 8)).toBe(true)
+    // Top edge crosses stay: no ruler there.
+    expect(g.crosses.some(p => p.y === g.y0)).toBe(true)
+    expect(g.ticks.every(([, y1]) => y1 === bottom)).toBe(true)
+  })
+
+  it('rulerClear 0 keeps points next to ruler sides', () => {
+    const g = sheetGeometry(W, H, B, styled('grid', { rulers: true, rulerSides: ['bottom'], rulerClear: 0 }))
+    expect(g.crosses).toHaveLength(17 * 7)
+  })
+
+  it('single-unit rulers use that unit on every side', () => {
+    const g = sheetGeometry(W, H, B, styled('rulers', { rulerUnits: 'cm', rulerSides: ['bottom'] }))
+    const texts = g.labels.map(l => l.text)
+    expect(texts).toContain('cm')
+    expect(texts).not.toContain('inch')
+    // 1 mm ticks along the bottom.
+    expect(g.ticks).toHaveLength(Math.ceil(g.w) - 1)
+  })
+
+  it('major dots replace major lines', () => {
+    const svg = svgOf(styled('grid', { majorStyle: 'dots' }))
+    expect(svg).toContain('id="major-dots"')
+    expect(svg).not.toContain('id="major-grid"')
+  })
+
+  it('minor lines cover major positions when majors are off', () => {
+    const g = sheetGeometry(W, H, B, styled('grid', { majorStyle: 'none' }))
+    expect(g.minor).toHaveLength(16 * 5 - 1 + 6 * 5 - 1)
+  })
+
+  it('minor dots skip major dot positions', () => {
+    const g = sheetGeometry(W, H, B, styled('dots', {}))
+    const key = (p: { x: number, y: number }) => `${p.x},${p.y}`
+    const majors = new Set(g.majorDots.map(key))
+    expect(g.majorDots.length).toBeGreaterThan(0)
+    expect(g.minorDots.some(p => majors.has(key(p)))).toBe(false)
+  })
+
+  it('all layers off leaves only the background', () => {
+    const svg = svgOf(styled('grid', { majorStyle: 'none', minorStyle: 'none', crosses: false, border: false }))
+    expect(svg).not.toMatch(/<(line|path|text)/)
+    expect(svg).toContain('id="background"')
+  })
+
+  it('margin moves the frame', () => {
+    const g = sheetGeometry(W, H, B, styled('grid', { margin: 20 }))
+    expect([g.cols, g.rows]).toEqual([17, 7])
+    const s = sheetGeometry(W, H, B, styled('rulers', { margin: 30 }))
+    expect([s.x0, s.w]).toEqual([50, 840])
+  })
+
+  it('weights reach the markup', () => {
+    const d = styled('grid', {})
+    d.style.weights = { ...d.style.weights, minor: 0.45, minorOpacity: 0.5, cross: 1.2 }
+    const svg = svgOf(d)
+    expect(svg).toContain('id="minor-grid" stroke="#9cc8ff" stroke-width="0.45" stroke-opacity="0.5"')
+    expect(svg).toMatch(/id="plus-signs"[^>]*stroke-width="1.2"/)
+  })
+
+  it('normalizes persisted styles', () => {
+    expect(normalizeStyle({ ...presetDesign('grid').style, margin: 500 })?.margin).toBe(100)
+    expect(normalizeStyle({ ...presetDesign('grid').style, rulerSides: ['left', 'top', 'x'] })?.rulerSides).toEqual(['top', 'left'])
+    expect(normalizeStyle({ ...presetDesign('grid').style, majorStyle: '<script>' })).toBeNull()
+    expect(normalizeStyle({ ...presetDesign('grid').style, margin: Number.NaN })).toBeNull()
+  })
+
+  it('viewport draws rulers only on chosen sides', () => {
+    const svg = buildBlueprintSvg({
+      mode: 'viewport', widthUnits: 100, heightUnits: 100, pxPerUnit: 2,
+      state: styled('grid', { rulers: true, rulerSides: ['left'] })
+    })
+    const d = svg.match(/id="bp-vp-rulers" d="([^"]+)"/)![1]!
+    expect(d.split('M').filter(Boolean).every(seg => seg.startsWith('0 '))).toBe(true)
   })
 })
 
