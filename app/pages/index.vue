@@ -7,7 +7,23 @@ const editFab = useTemplateRef<{ focus: () => void }>('editFab')
 const exportFab = useTemplateRef<{ focus: () => void }>('exportFab')
 const root = useTemplateRef<HTMLElement>('root')
 
+/** Relative luminance of a #rrggbb colour, 0 (black) to 1 (white). */
+function luminance(hex: string) {
+  const [r, g, b] = [1, 3, 5].map((i) => {
+    const c = parseInt(hex.slice(i, i + 2), 16) / 255
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4
+  }) as [number, number, number]
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+// Glass drawers darken more over light backgrounds so white text keeps its contrast.
+const glassTint = computed(() => {
+  const t = Math.min(1, Math.max(0, (luminance(store.colors.bg) - 0.15) / 0.5))
+  return `rgba(0,0,0,${(0.28 + 0.27 * t).toFixed(2)})`
+})
+
 const cssVars = computed(() => ({
+  '--bp-glass-tint': glassTint.value,
   '--bp-bg': store.colors.bg,
   '--bp-major': store.colors.major,
   '--bp-minor': store.colors.minor,
