@@ -19,7 +19,7 @@ const label = computed(() => `${Math.round(store.zoom * 100)}%`)
     <button
       type="button"
       aria-label="Reset zoom"
-      class="h-10 min-w-15 border-x border-bp-edge font-mono text-xs text-bp-text"
+      class="h-10 min-w-15 border-x border-[rgba(234,242,255,0.22)] font-mono text-xs text-bp-text"
       @click="store.resetZoom()"
     >
       <span aria-live="polite">{{ label }}</span>

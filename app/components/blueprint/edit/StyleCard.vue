@@ -31,7 +31,7 @@ const thumb = computed(() => buildBlueprintSvg({
     type="button"
     :aria-pressed="selected"
     class="flex flex-col gap-2.5 border px-1.5 pt-1.5 pb-2.5 text-bp-text"
-    :class="selected ? 'border-bp-text bg-white/10' : 'border-bp-control bg-transparent'"
+    :class="selected ? 'border-bp-text bg-[rgba(234,242,255,0.1)]' : 'border-bp-control bg-transparent'"
     @click="$emit('pick')"
   >
     <!-- eslint-disable vue/no-v-html -- SVG is built locally from preset numbers and validated hex colours -->

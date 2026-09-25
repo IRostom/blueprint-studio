@@ -34,8 +34,8 @@ const style = computed(() => ({
     :id="id"
     :aria-labelledby="`${id}-title`"
     :inert="!open"
-    class="absolute inset-y-0 z-10 box-border flex max-w-full flex-col border-bp-edge bg-(--bp-glass-tint) text-bp-text backdrop-blur-[28px] backdrop-brightness-[.85] backdrop-saturate-[1.6]"
-    :class="side === 'left' ? 'bp-glass-edge-left left-0 border-r' : 'bp-glass-edge-right right-0 border-l'"
+    class="absolute inset-y-0 z-10 box-border flex max-w-full flex-col border-bp-edge bg-bp-glass text-bp-text backdrop-blur-[22px] backdrop-saturate-[1.4]"
+    :class="side === 'left' ? 'left-0 border-r' : 'right-0 border-l'"
     :style="style"
   >
     <div class="flex h-18 shrink-0 items-center justify-between border-b border-bp-hairline pr-4 pl-6">
