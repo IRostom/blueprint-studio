@@ -1,5 +1,6 @@
 import type { BlueprintDesign, ExportSettings } from './constants'
 import { MM_PER_INCH, PX_PER_MM } from './constants'
+import { matchStylePreset } from './style'
 import { buildBlueprintSvg } from './svg'
 
 /**
@@ -68,7 +69,7 @@ export function exportSvg(design: BlueprintDesign, ex: ExportSettings, pxSize?: 
 export function exportFilename(design: BlueprintDesign, ex: ExportSettings) {
   const size = `${ex.width}x${ex.height}${ex.target === 'print' ? 'mm' : 'px'}`
   const res = ex.format === 'png' ? (ex.target === 'print' ? `-${ex.dpi}dpi` : `@${ex.scale}x`) : ''
-  return `blueprint-${design.layout}-${size}${res}.${ex.format}`
+  return `blueprint-${matchStylePreset(design)}-${size}${res}.${ex.format}`
 }
 
 /** Probe whether this browser can actually allocate and draw a canvas this big. */

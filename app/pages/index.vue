@@ -12,6 +12,7 @@ const cssVars = computed(() => ({
   '--bp-major': store.colors.major,
   '--bp-minor': store.colors.minor,
   '--bp-plus': store.colors.plus,
+  '--bp-ruler': store.colors.ruler,
   'backgroundColor': store.colors.bg
 }))
 

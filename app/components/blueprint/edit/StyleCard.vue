@@ -1,30 +1,29 @@
 <script setup lang="ts">
-import type { BlueprintColors, Layout } from '~/utils/blueprint/constants'
+import type { BlueprintColors, StylePreset } from '~/utils/blueprint/constants'
+import { presetDesign } from '~/utils/blueprint/style'
+import { buildBlueprintSvg } from '~/utils/blueprint/svg'
 
 const props = defineProps<{
-  layout: Layout
-  name: string
+  preset: StylePreset
   selected: boolean
   colors: BlueprintColors
 }>()
 
 defineEmits<{ pick: [] }>()
 
-const thumb = computed(() => {
-  const c = props.colors
-  return props.layout === 'grid'
-    ? {
-        backgroundColor: c.bg,
-        backgroundImage: `linear-gradient(to right,${c.major} 1px,transparent 1px),linear-gradient(to bottom,${c.major} 1px,transparent 1px)`,
-        backgroundSize: '20px 20px',
-        backgroundPosition: '9px 9px'
-      }
-    : {
-        backgroundColor: c.bg,
-        backgroundImage: `radial-gradient(circle,${c.minor} 1px,transparent 1.5px)`,
-        backgroundSize: '8px 8px'
-      }
-})
+// Thumbnail: the real viewport renderer at a small scale, wider than the card and clipped.
+const THUMB_W = 200
+const THUMB_H = 64
+const P = 0.8
+
+const thumb = computed(() => buildBlueprintSvg({
+  mode: 'viewport',
+  widthUnits: THUMB_W / P,
+  heightUnits: THUMB_H / P,
+  pxPerUnit: P,
+  state: presetDesign(props.preset.id, { colors: props.colors }),
+  idPrefix: `bp-thumb-${props.preset.id}`
+}))
 </script>
 
 <template>
@@ -35,10 +34,12 @@ const thumb = computed(() => {
     :class="selected ? 'border-bp-text bg-[rgba(234,242,255,0.1)]' : 'border-bp-control bg-transparent'"
     @click="$emit('pick')"
   >
+    <!-- eslint-disable vue/no-v-html -- SVG is built locally from preset numbers and validated hex colours -->
     <span
-      class="block h-16 w-full"
-      :style="thumb"
+      class="flex h-16 w-full justify-center overflow-hidden [&>svg]:block [&>svg]:shrink-0"
+      v-html="thumb"
     />
-    <span class="text-left text-[13px] font-medium">{{ name }}</span>
+    <!-- eslint-enable vue/no-v-html -->
+    <span class="text-left text-[13px] font-medium">{{ preset.name }}</span>
   </button>
 </template>

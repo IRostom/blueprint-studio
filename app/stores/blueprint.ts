@@ -7,9 +7,11 @@ import type {
   ExportFormat,
   ExportSettings,
   ExportTarget,
-  Layout,
+  GridStyle,
+  RulerSide,
   Scale,
-  Subdivision
+  Subdivision,
+  WeightKey
 } from '~/utils/blueprint/constants'
 import {
   CROSS_MAX,
@@ -17,34 +19,50 @@ import {
   DEFAULT_DESIGN,
   DEFAULT_EXPORT,
   DEFAULT_PRESET,
+  DEFAULT_STYLE_PRESET,
   DEFAULT_THEME,
   MAJOR_MAX,
   MAJOR_MIN,
   PRESETS,
+  STYLE_PRESETS,
   THEMES,
   ZOOM_MAX,
-  ZOOM_MIN
+  ZOOM_MIN,
+  copyStyle
 } from '~/utils/blueprint/constants'
 import { canvasUnits, exceedsCanvasLimit, outputLabel as formatOutput, pngPixels } from '~/utils/blueprint/export'
+import { clampWeight, matchStylePreset, normalizeStyle } from '~/utils/blueprint/style'
 
 export type Drawer = 'edit' | 'export'
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v))
 const HEX = /^#[0-9a-f]{6}$/i
 
+const STORAGE_KEY = 'blueprint-studio'
+
 /** Colours end up inside SVG markup, so only accept plain #rrggbb. */
 function isColors(v: unknown): v is BlueprintColors {
   return !!v && typeof v === 'object'
-    && (['bg', 'major', 'minor', 'plus'] as const).every(k => HEX.test(String((v as Record<string, unknown>)[k])))
+    && (['bg', 'major', 'minor', 'plus', 'ruler'] as const).every(k => HEX.test(String((v as Record<string, unknown>)[k])))
+}
+
+/** The raw persisted object, to tell older saves apart. */
+function savedState(): Record<string, unknown> | null {
+  try {
+    const v = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null')
+    return v && typeof v === 'object' ? v : null
+  } catch {
+    return null
+  }
 }
 
 export const useBlueprintStore = defineStore('blueprint', () => {
   // Design (persisted)
-  const layout = ref<Layout>(DEFAULT_DESIGN.layout)
   const major = ref(DEFAULT_DESIGN.major)
   const sub = ref<Subdivision>(DEFAULT_DESIGN.sub)
   const cross = ref(DEFAULT_DESIGN.cross)
   const colors = ref<BlueprintColors>({ ...DEFAULT_DESIGN.colors })
+  const style = ref<GridStyle>(copyStyle(DEFAULT_DESIGN.style))
   const theme = ref(DEFAULT_THEME)
   const zoom = ref(1)
   const exportSettings = ref<ExportSettings>({ ...DEFAULT_EXPORT })
@@ -54,22 +72,27 @@ export const useBlueprintStore = defineStore('blueprint', () => {
   const exportOpen = ref(false)
 
   const design = computed<BlueprintDesign>(() => ({
-    layout: layout.value,
     major: major.value,
     sub: sub.value,
     cross: cross.value,
-    colors: colors.value
+    colors: colors.value,
+    style: style.value
   }))
 
+  /** Preset id the current layers match, or `custom`. */
+  const stylePreset = computed(() => matchStylePreset(design.value))
   const minor = computed(() => Math.round(major.value / sub.value * 10) / 10)
-  const specText = computed(() =>
-    `${layout.value === 'grid' ? 'GRID + CROSSES' : 'RULERS + DOTS'}  ·  ${major.value} / ${minor.value} MM`)
-  const roleLabels = computed<Record<ColorRole, string>>(() => ({
+  const specText = computed(() => {
+    const name = STYLE_PRESETS.find(p => p.id === stylePreset.value)?.name ?? 'Custom'
+    return `${name.toUpperCase()}  ·  ${major.value} / ${minor.value} MM`
+  })
+  const roleLabels: Record<ColorRole, string> = {
     bg: 'Background',
-    major: layout.value === 'grid' ? 'Major grid' : 'Frame',
-    minor: layout.value === 'grid' ? 'Minor grid' : 'Dots',
-    plus: 'Crosses + rulers'
-  }))
+    major: 'Major grid + border',
+    minor: 'Minor grid',
+    plus: 'Crosses',
+    ruler: 'Rulers + title block'
+  }
   const presets = computed(() => PRESETS[exportSettings.value.target])
   const canvas = computed(() => canvasUnits(exportSettings.value))
   const outputPixels = computed(() => pngPixels(exportSettings.value))
@@ -78,8 +101,23 @@ export const useBlueprintStore = defineStore('blueprint', () => {
     exportSettings.value.format === 'png' && exceedsCanvasLimit(outputPixels.value))
 
   // Design actions
-  function setLayout(v: Layout) {
-    layout.value = v
+  function applyStylePreset(id: string) {
+    const p = STYLE_PRESETS.find(p => p.id === id)
+    if (!p) return
+    style.value = copyStyle(p.style)
+    cross.value = p.cross
+  }
+  /** Validates and clamps through the same guard as persisted state. */
+  function setStyle<K extends keyof GridStyle>(key: K, v: GridStyle[K]) {
+    const next = normalizeStyle({ ...style.value, [key]: v })
+    if (next) style.value = next
+  }
+  function setWeight(key: WeightKey, v: number) {
+    if (Number.isFinite(v)) style.value = { ...style.value, weights: { ...style.value.weights, [key]: clampWeight(key, v) } }
+  }
+  function toggleRulerSide(side: RulerSide) {
+    const on = style.value.rulerSides.includes(side)
+    setStyle('rulerSides', on ? style.value.rulerSides.filter(s => s !== side) : [...style.value.rulerSides, side])
   }
   function setMajor(v: number) {
     if (Number.isFinite(v)) major.value = clamp(v, MAJOR_MIN, MAJOR_MAX)
@@ -108,10 +146,9 @@ export const useBlueprintStore = defineStore('blueprint', () => {
     zoom.value = 1
   }
   function resetDesign() {
-    layout.value = DEFAULT_DESIGN.layout
     major.value = DEFAULT_DESIGN.major
     sub.value = DEFAULT_DESIGN.sub
-    cross.value = DEFAULT_DESIGN.cross
+    applyStylePreset(DEFAULT_STYLE_PRESET)
     theme.value = DEFAULT_THEME
     colors.value = { ...DEFAULT_DESIGN.colors }
     zoom.value = 1
@@ -157,19 +194,38 @@ export const useBlueprintStore = defineStore('blueprint', () => {
   }
 
   return {
-    layout, major, sub, cross, colors, theme, zoom, export: exportSettings, editOpen, exportOpen,
-    design, minor, specText, roleLabels, presets, canvas, outputPixels, outputLabel, exceedsLimit,
-    setLayout, setMajor, setSub, setCross, applyTheme, setColor, zoomBy, resetZoom, resetDesign,
+    major, sub, cross, colors, style, theme, zoom, export: exportSettings, editOpen, exportOpen,
+    design, stylePreset, minor, specText, roleLabels, presets, canvas, outputPixels, outputLabel, exceedsLimit,
+    applyStylePreset, setStyle, setWeight, toggleRulerSide,
+    setMajor, setSub, setCross, applyTheme, setColor, zoomBy, resetZoom, resetDesign,
     pickPreset, setTarget, setDimension, setBleed, setFormat, setDpi, setScale,
     openDrawer, closeDrawers
   }
 }, {
   persist: {
-    key: 'blueprint-studio',
-    pick: ['layout', 'major', 'sub', 'cross', 'colors', 'theme', 'zoom', 'export'],
-    // Drop anything in storage that isn't a valid colour set.
+    key: STORAGE_KEY,
+    pick: ['major', 'sub', 'cross', 'colors', 'style', 'theme', 'zoom', 'export'],
     afterHydrate: ({ store }) => {
+      // Saves from before the ruler colour existed: rulers used the crosses colour.
+      const saved = store.colors as Partial<BlueprintColors> | undefined
+      if (saved && typeof saved === 'object' && saved.ruler === undefined) {
+        store.colors = { ...saved, ruler: saved.plus } as BlueprintColors
+      }
+      // Drop anything in storage that isn't a valid colour set.
       if (!isColors(store.colors)) store.applyTheme(DEFAULT_THEME)
+      // Older saves had `layout: 'grid' | 'rulers'` instead of layers; the
+      // rulers layout drew crosses at 0.7× the saved size.
+      const raw = savedState()
+      if (raw && !('style' in raw)) {
+        const rulers = raw.layout === 'rulers'
+        const savedCross = store.cross
+        store.applyStylePreset(rulers ? 'rulers' : DEFAULT_STYLE_PRESET)
+        store.setCross(Math.round(rulers ? savedCross * 0.7 : savedCross))
+        return
+      }
+      const style = normalizeStyle(store.style)
+      if (style) store.style = style
+      else store.applyStylePreset(DEFAULT_STYLE_PRESET)
     }
   }
 })

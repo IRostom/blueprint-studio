@@ -1,12 +1,6 @@
 import type { BlueprintDesign } from './constants'
 import type { Label, Line, Point } from './geometry'
-import {
-  GRID_STYLE,
-  RULER_STYLE,
-  gridSheetGeometry,
-  rulersSheetGeometry,
-  viewportGeometry
-} from './geometry'
+import { RULER_STYLE, VIEWPORT_RULER_PX, sheetGeometry, viewportGeometry } from './geometry'
 
 export interface BuildBlueprintSvgOptions {
   /**
@@ -56,38 +50,39 @@ function buildViewport({ widthUnits, heightUnits, pxPerUnit: p, state, idPrefix 
   const w = widthUnits * p
   const h = heightUnits * p
   const c = state.colors
+  const st = state.style
   const g = viewportGeometry(w, h, p, state)
   const id = (s: string) => `${idPrefix}-${s}`
   const out: string[] = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${fmt(w)}" height="${fmt(h)}" viewBox="0 0 ${fmt(w)} ${fmt(h)}" aria-hidden="true">`
   ]
 
-  // A 1px L-shape per tile draws one vertical and one horizontal line.
-  const lTile = (s: number) => `M0 0H${fmt(s)}V1H1V${fmt(s)}H0Z`
+  // A t-px L-shape per tile draws one vertical and one horizontal line.
+  const lTile = (s: number, t: number) => `M0 0H${fmt(s)}V${fmt(t)}H${fmt(t)}V${fmt(s)}H0Z`
+  // Dot patterns are offset half a tile so the dot sits on the lattice point.
+  const dotTile = (s: number, r: number, fill: string) =>
+    `<circle cx="${fmt(s / 2)}" cy="${fmt(s / 2)}" r="${fmt(r)}" fill="${fill}"/>`
 
-  if (state.layout === 'grid') {
-    out.push(
-      '<defs>',
-      `<pattern id="${id('minor')}" patternUnits="userSpaceOnUse" x="${fmt(g.mox)}" y="${fmt(g.moy)}" width="${fmt(g.m)}" height="${fmt(g.m)}">`,
-      `<path d="${lTile(g.m)}" fill="${c.minor}" fill-opacity="${GRID_STYLE.minorOpacity}"/></pattern>`,
-      `<pattern id="${id('major')}" patternUnits="userSpaceOnUse" x="${fmt(g.ox)}" y="${fmt(g.oy)}" width="${fmt(g.M)}" height="${fmt(g.M)}">`,
-      `<path d="${lTile(g.M)}" fill="${c.major}"/></pattern>`,
-      '</defs>',
-      `<rect width="100%" height="100%" fill="${c.bg}"/>`,
-      `<rect width="100%" height="100%" fill="url(#${id('minor')})"/>`,
-      `<rect width="100%" height="100%" fill="url(#${id('major')})"/>`
-    )
-  } else {
-    const r = g.dotRadius + 0.25
-    out.push(
-      '<defs>',
-      `<pattern id="${id('dots')}" patternUnits="userSpaceOnUse" x="${fmt(g.mox - g.m / 2)}" y="${fmt(g.moy - g.m / 2)}" width="${fmt(g.m)}" height="${fmt(g.m)}">`,
-      `<circle cx="${fmt(g.m / 2)}" cy="${fmt(g.m / 2)}" r="${fmt(r)}" fill="${c.minor}"/></pattern>`,
-      '</defs>',
-      `<rect width="100%" height="100%" fill="${c.bg}"/>`,
-      `<rect width="100%" height="100%" fill="url(#${id('dots')})"/>`
-    )
+  const defs: string[] = []
+  const fills: string[] = []
+  const layer = (name: string, x: number, y: number, s: number, body: string) => {
+    defs.push(`<pattern id="${id(name)}" patternUnits="userSpaceOnUse" x="${fmt(x)}" y="${fmt(y)}" width="${fmt(s)}" height="${fmt(s)}">${body}</pattern>`)
+    fills.push(`<rect width="100%" height="100%" fill="url(#${id(name)})"/>`)
   }
+
+  if (st.minorStyle === 'lines') {
+    layer('minor', g.mox, g.moy, g.m, `<path d="${lTile(g.m, g.minorWidth)}" fill="${c.minor}" fill-opacity="${fmt(st.weights.minorOpacity)}"/>`)
+  } else if (st.minorStyle === 'dots') {
+    layer('dots', g.mox - g.m / 2, g.moy - g.m / 2, g.m, dotTile(g.m, g.dotRadius + 0.25, c.minor))
+  }
+  if (st.majorStyle === 'lines') {
+    layer('major', g.ox, g.oy, g.M, `<path d="${lTile(g.M, g.majorWidth)}" fill="${c.major}"/>`)
+  } else if (st.majorStyle === 'dots') {
+    layer('major-dots', g.ox - g.M / 2, g.oy - g.M / 2, g.M, dotTile(g.M, g.dotRadius * 2 + 0.25, c.major))
+  }
+
+  if (defs.length) out.push('<defs>', ...defs, '</defs>')
+  out.push(`<rect width="100%" height="100%" fill="${c.bg}"/>`, ...fills)
 
   // Crosses: two filled bars each, like the prototype's gradients.
   if (g.crosses.length) {
@@ -99,9 +94,10 @@ function buildViewport({ widthUnits, heightUnits, pxPerUnit: p, state, idPrefix 
     out.push(`<path d="${d}" fill="${c.plus}"/>`)
   }
 
-  // Rulers: 1px tick strips on all four window edges (major 14px, minor 7px).
-  if (state.layout === 'rulers' && g.m >= 2) {
-    const L = 14
+  // Rulers: 1px tick strips on the chosen window edges (major full length, minor half).
+  const sides = st.rulers ? st.rulerSides : []
+  if (sides.length && g.m >= 2) {
+    const L = VIEWPORT_RULER_PX
     const isMajor = (pos: number, origin: number) => {
       const k = (pos - origin) / g.M
       return Math.abs(k - Math.round(k)) < 1e-3
@@ -109,13 +105,15 @@ function buildViewport({ widthUnits, heightUnits, pxPerUnit: p, state, idPrefix 
     const d: string[] = []
     for (let x = g.mox; x <= w; x += g.m) {
       const len = isMajor(x, g.ox) ? L : L / 2
-      d.push(`M${fmt(x)} 0h1v${len}h-1z`, `M${fmt(x)} ${fmt(h)}h1v${-len}h-1z`)
+      if (sides.includes('top')) d.push(`M${fmt(x)} 0h1v${len}h-1z`)
+      if (sides.includes('bottom')) d.push(`M${fmt(x)} ${fmt(h)}h1v${-len}h-1z`)
     }
     for (let y = g.moy; y <= h; y += g.m) {
       const len = isMajor(y, g.oy) ? L : L / 2
-      d.push(`M0 ${fmt(y)}v1h${len}v-1z`, `M${fmt(w)} ${fmt(y)}v1h${-len}v-1z`)
+      if (sides.includes('left')) d.push(`M0 ${fmt(y)}v1h${len}v-1z`)
+      if (sides.includes('right')) d.push(`M${fmt(w)} ${fmt(y)}v1h${-len}v-1z`)
     }
-    out.push(`<path d="${d.join('')}" fill="${c.plus}"/>`)
+    out.push(`<path id="${id('rulers')}" d="${d.join('')}" fill="${c.ruler}"/>`)
   }
 
   out.push('</svg>')
@@ -135,53 +133,61 @@ function buildSheet({
   idPrefix = 'bp'
 }: BuildBlueprintSvgOptions) {
   const c = state.colors
+  const st = state.style
+  const wt = st.weights
   const sw = (mm: number) => fmt(Math.max(mm, minStrokePx / p))
   const size = unit === 'mm'
     ? `width="${fmt(W)}mm" height="${fmt(H)}mm"`
     : `width="${fmt(W * p)}" height="${fmt(H * p)}"`
-  const out: string[] = [
-    `<svg xmlns="http://www.w3.org/2000/svg" ${size} viewBox="0 0 ${fmt(W)} ${fmt(H)}">`
-  ]
+  const g = sheetGeometry(W, H, bleed, state)
+  const bw = st.border ? wt.border : 0
+  const clipId = `${idPrefix}-grid-clip`
+  // Zero-length round-capped segments: one element for thousands of dots.
+  const dotPath = (pts: typeof g.minorDots) => pts.map(({ x, y }) => `M${fmt(x)} ${fmt(y)}h0`).join('')
 
-  if (state.layout === 'grid') {
-    const g = gridSheetGeometry(W, H, bleed, state)
-    const bw = GRID_STYLE.borderWidth
-    const clipId = `${idPrefix}-grid-clip`
+  const out: string[] = [
+    `<svg xmlns="http://www.w3.org/2000/svg" ${size} viewBox="0 0 ${fmt(W)} ${fmt(H)}">`,
+    '<defs>',
+    `<clipPath id="${clipId}"><rect x="${fmt(g.x0 - bw / 2)}" y="${fmt(g.y0 - bw / 2)}" width="${fmt(g.w + bw)}" height="${fmt(g.h + bw)}"/></clipPath>`,
+    '</defs>',
+    `<rect id="background" width="${fmt(W)}" height="${fmt(H)}" fill="${c.bg}"/>`
+  ]
+  if (g.minor.length) {
+    out.push(`<g id="minor-grid" stroke="${c.minor}" stroke-width="${sw(wt.minor)}" stroke-opacity="${fmt(wt.minorOpacity)}">${g.minor.map(lineEl).join('')}</g>`)
+  }
+  if (g.minorDots.length) {
+    out.push(`<path id="dots" d="${dotPath(g.minorDots)}" stroke="${c.minor}" stroke-width="${sw(wt.dot * 2)}" stroke-linecap="round" fill="none"/>`)
+  }
+  if (g.major.length) {
+    out.push(`<g id="major-grid" stroke="${c.major}" stroke-width="${sw(wt.major)}">${g.major.map(lineEl).join('')}</g>`)
+  }
+  if (g.majorDots.length) {
+    out.push(`<path id="major-dots" d="${dotPath(g.majorDots)}" stroke="${c.major}" stroke-width="${sw(wt.dot * 4)}" stroke-linecap="round" fill="none"/>`)
+  }
+  if (st.border) {
+    out.push(`<g id="border" stroke="${c.major}" stroke-width="${sw(bw)}" fill="none" stroke-linecap="square"><rect x="${fmt(g.x0)}" y="${fmt(g.y0)}" width="${fmt(g.w)}" height="${fmt(g.h)}"/></g>`)
+  }
+  if (g.crosses.length) {
+    out.push(`<g id="plus-signs" clip-path="url(#${clipId})" stroke="${c.plus}" stroke-width="${sw(wt.cross)}" stroke-linecap="square">${crossLines(g.crosses, g.arm)}</g>`)
+  }
+  if (g.ticks.length) {
     out.push(
-      '<defs>',
-      `<clipPath id="${clipId}"><rect x="${fmt(g.x0 - bw / 2)}" y="${fmt(g.y0 - bw / 2)}" width="${fmt(g.gridW + bw)}" height="${fmt(g.gridH + bw)}"/></clipPath>`,
-      '</defs>',
-      `<rect id="background" width="${fmt(W)}" height="${fmt(H)}" fill="${c.bg}"/>`,
-      `<g id="minor-grid" stroke="${c.minor}" stroke-width="${sw(GRID_STYLE.minorWidth)}" stroke-opacity="${GRID_STYLE.minorOpacity}">${g.minor.map(lineEl).join('')}</g>`,
-      `<g id="major-grid" stroke="${c.major}" stroke-width="${sw(GRID_STYLE.majorWidth)}">${g.major.map(lineEl).join('')}</g>`,
-      `<g id="border" stroke="${c.major}" stroke-width="${sw(bw)}" fill="none" stroke-linecap="square"><rect x="${fmt(g.x0)}" y="${fmt(g.y0)}" width="${fmt(g.gridW)}" height="${fmt(g.gridH)}"/></g>`,
-      `<g id="plus-signs" clip-path="url(#${clipId})" stroke="${c.plus}" stroke-width="${sw(GRID_STYLE.plusWidth)}" stroke-linecap="square">${crossLines(g.crosses, g.arm)}</g>`
+      `<g id="ruler-ticks" stroke="${c.ruler}" stroke-width="${sw(RULER_STYLE.tickWidth)}">${g.ticks.map(lineEl).join('')}</g>`,
+      `<g id="ruler-labels" fill="${c.ruler}" font-family="${esc(RULER_STYLE.font)}">${g.labels.map(textEl).join('')}</g>`
     )
-  } else {
-    const g = rulersSheetGeometry(W, H, bleed, state)
-    const dotD = g.dots.map(({ x, y }) => `M${fmt(x)} ${fmt(y)}h0`).join('')
+  }
+  const tb = g.titleBlock
+  if (tb) {
     out.push(
-      `<rect id="background" width="${fmt(W)}" height="${fmt(H)}" fill="${c.bg}"/>`,
-      // Zero-length round-capped segments: one element for thousands of dots.
-      `<path id="dots" d="${dotD}" stroke="${c.minor}" stroke-width="${sw(RULER_STYLE.dotRadius * 2)}" stroke-linecap="round" fill="none"/>`,
-      `<g id="plus-signs" stroke="${c.plus}" stroke-width="${sw(RULER_STYLE.plusWidth)}" stroke-linecap="square">${crossLines(g.crosses, g.arm)}</g>`,
-      `<rect id="frame" x="${fmt(g.x0)}" y="${fmt(g.y0)}" width="${fmt(g.w)}" height="${fmt(g.h)}" fill="none" stroke="${c.major}" stroke-width="${sw(RULER_STYLE.frameWidth)}"/>`,
-      `<g id="ruler-ticks" stroke="${c.plus}" stroke-width="${sw(RULER_STYLE.tickWidth)}">${g.ticks.map(lineEl).join('')}</g>`,
-      `<g id="ruler-labels" fill="${c.plus}" font-family="${esc(RULER_STYLE.font)}">${g.labels.map(textEl).join('')}</g>`
+      `<g id="title-block" fill="${c.ruler}" font-family="${esc(RULER_STYLE.font)}">`,
+      `<rect x="${fmt(tb.x)}" y="${fmt(tb.y)}" width="${fmt(tb.w)}" height="${fmt(tb.h)}" fill="${c.bg}"/>`,
+      `<g stroke="${c.ruler}" stroke-width="${sw(0.3)}" fill="none">`,
+      `<rect x="${fmt(tb.x)}" y="${fmt(tb.y)}" width="${fmt(tb.w)}" height="${fmt(tb.h)}"/>`,
+      tb.lines.map(lineEl).join(''),
+      '</g>',
+      tb.labels.map(textEl).join(''),
+      '</g>'
     )
-    const tb = g.titleBlock
-    if (tb) {
-      out.push(
-        `<g id="title-block" fill="${c.plus}" font-family="${esc(RULER_STYLE.font)}">`,
-        `<rect x="${fmt(tb.x)}" y="${fmt(tb.y)}" width="${fmt(tb.w)}" height="${fmt(tb.h)}" fill="${c.bg}"/>`,
-        `<g stroke="${c.plus}" stroke-width="${sw(0.3)}" fill="none">`,
-        `<rect x="${fmt(tb.x)}" y="${fmt(tb.y)}" width="${fmt(tb.w)}" height="${fmt(tb.h)}"/>`,
-        tb.lines.map(lineEl).join(''),
-        '</g>',
-        tb.labels.map(textEl).join(''),
-        '</g>'
-      )
-    }
   }
 
   out.push('</svg>')
